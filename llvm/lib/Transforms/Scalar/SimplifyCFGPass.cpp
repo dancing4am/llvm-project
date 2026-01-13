@@ -42,6 +42,9 @@
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/SimplifyCFGOptions.h"
 #include <utility>
+#include <algorithm>
+#include <random>
+#include <vector>
 using namespace llvm;
 
 #define DEBUG_TYPE "simplifycfg"
@@ -373,6 +376,23 @@ void SimplifyCFGPass::printPipeline(
 
 PreservedAnalyses SimplifyCFGPass::run(Function &F,
                                        FunctionAnalysisManager &AM) {
+  errs() << "DEBUG: SimplifyCFGPass is running on: " << F.getName() << "\n";
+
+  if (!F.isDeclaration()) {
+      std::vector<BasicBlock *> Blocks;
+      for (BasicBlock &BB : F) {
+          if (&BB != &F.getEntryBlock()) Blocks.push_back(&BB);
+      }
+      
+      if (Blocks.size() > 1) {
+          std::random_device rd;
+          std::mt19937 g(rd());
+          std::shuffle(Blocks.begin(), Blocks.end(), g);
+          for (BasicBlock *BB : Blocks) BB->moveAfter(&F.getEntryBlock());
+          errs() << ">> [SUCCESS] Shuffled " << F.getName() << " !!\n";
+      }
+  }
+
   auto &TTI = AM.getResult<TargetIRAnalysis>(F);
   Options.AC = &AM.getResult<AssumptionAnalysis>(F);
   DominatorTree *DT = nullptr;
