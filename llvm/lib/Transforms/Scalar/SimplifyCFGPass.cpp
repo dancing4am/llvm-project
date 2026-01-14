@@ -391,18 +391,30 @@ PreservedAnalyses SimplifyCFGPass::run(Function &F,
         if (BB.isEntryBlock()) continue;
         IRBuilder<> Builder(&*BB.getFirstInsertionPt());
 
+        Type *I64Ty = Type::getInt64Ty(F.getContext());
+        Type *I32Ty = Type::getInt32Ty(F.getContext());
+
+        // prep: prevent optimization ignoring changes
+        AllocaInst *Vault = Builder.CreateAlloca(I64Ty, nullptr, "obf_vault"); // put it here to make distance from storing & to make stack frame dirty        
+
         // randomized fake comparison
         uint32_t rVal = dist32(g);
-        Value *V1 = ConstantInt::get(Type::getInt32Ty(F.getContext()), rVal);
-        Value *V2 = ConstantInt::get(Type::getInt32Ty(F.getContext()), rVal);
-        Builder.CreateICmpEQ(V1, V2, "obf_cond");
+        Value *V1 = ConstantInt::get(I32Ty, rVal);
+        Value *V2 = ConstantInt::get(I32Ty, rVal);
+        Value *Cond = Builder.CreateICmpEQ(V1, V2, "obf_cond");        
 
         // randomized fake key
         uint64_t rKey = dist64(g); // Generate random 64-bit constant
-        Value *FakeKey = ConstantInt::get(Type::getInt64Ty(F.getContext()), rKey);
-        Builder.CreateAdd(FakeKey, ConstantInt::get(Type::getInt64Ty(F.getContext()), 1), "secret_key_ptr");
+        Value *FakeKey = ConstantInt::get(I64Ty, rKey);
+        Value *KeyOp = Builder.CreateAdd(FakeKey, ConstantInt::get(I64Ty, 1), "secret_key_ptr");
 
-        // inline asm NOP (annoying analysis)
+        // store volatile with dependency chain
+        Value *CondZExt = Builder.CreateZExt(Cond, I64Ty);
+        Value *Combined = Builder.CreateAdd(KeyOp, CondZExt, "combined_junk");
+        StoreInst *SI = Builder.CreateStore(Combined, Vault);
+        SI->setVolatile(true);
+
+        // inline asm NOP (annoying decompiler)
         FunctionType *FTy = FunctionType::get(Type::getVoidTy(F.getContext()), false);
         InlineAsm *IA = InlineAsm::get(FTy, "nop", "", true);
         Builder.CreateCall(IA);
