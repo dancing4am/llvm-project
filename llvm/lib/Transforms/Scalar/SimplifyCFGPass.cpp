@@ -41,6 +41,9 @@
 #include "llvm/Transforms/Scalar/SimplifyCFG.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/SimplifyCFGOptions.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/InlineAsm.h"
 #include <utility>
 #include <algorithm>
 #include <random>
@@ -376,21 +379,48 @@ void SimplifyCFGPass::printPipeline(
 
 PreservedAnalyses SimplifyCFGPass::run(Function &F,
                                        FunctionAnalysisManager &AM) {
-  errs() << "DEBUG: SimplifyCFGPass is running on: " << F.getName() << "\n";
-
   if (!F.isDeclaration()) {
-      std::vector<BasicBlock *> Blocks;
-      for (BasicBlock &BB : F) {
-          if (&BB != &F.getEntryBlock()) Blocks.push_back(&BB);
-      }
-      
-      if (Blocks.size() > 1) {
-          std::random_device rd;
-          std::mt19937 g(rd());
-          std::shuffle(Blocks.begin(), Blocks.end(), g);
-          for (BasicBlock *BB : Blocks) BB->moveAfter(&F.getEntryBlock());
-          errs() << ">> [SUCCESS] Shuffled " << F.getName() << " !!\n";
-      }
+    errs() << ">> Hacking Test: " << F.getName() << " (Blocks: " << F.size() << ")\n";
+
+    std::random_device rd;
+    std::mt19937 g(rd());
+    std::uniform_int_distribution<uint64_t> dist64(0, 0xFFFFFFFFFFFFFFFF);
+    std::uniform_int_distribution<uint32_t> dist32(0, 0xFFFFFFFF);
+
+    for (BasicBlock &BB : F) {
+        if (BB.isEntryBlock()) continue;
+        IRBuilder<> Builder(&*BB.getFirstInsertionPt());
+
+        // randomized fake comparison
+        uint32_t rVal = dist32(g);
+        Value *V1 = ConstantInt::get(Type::getInt32Ty(F.getContext()), rVal);
+        Value *V2 = ConstantInt::get(Type::getInt32Ty(F.getContext()), rVal);
+        Builder.CreateICmpEQ(V1, V2, "obf_cond");
+
+        // randomized fake key
+        uint64_t rKey = dist64(g); // Generate random 64-bit constant
+        Value *FakeKey = ConstantInt::get(Type::getInt64Ty(F.getContext()), rKey);
+        Builder.CreateAdd(FakeKey, ConstantInt::get(Type::getInt64Ty(F.getContext()), 1), "secret_key_ptr");
+
+        // inline asm NOP (annoying analysis)
+        FunctionType *FTy = FunctionType::get(Type::getVoidTy(F.getContext()), false);
+        InlineAsm *IA = InlineAsm::get(FTy, "nop", "", true);
+        Builder.CreateCall(IA);
+    }
+
+    // shuffle control flow
+    if (F.size() > 2) {
+        std::vector<BasicBlock *> Blocks;
+        for (BasicBlock &BB : F) {
+            if (!BB.isEntryBlock()) Blocks.push_back(&BB);
+        }
+
+        std::shuffle(Blocks.begin(), Blocks.end(), g);
+        for (BasicBlock *BB : Blocks) {
+            BB->moveAfter(&F.getEntryBlock());
+        }
+        errs() << ">> Success: Shuffled " << Blocks.size() << " blocks in " << F.getName() << "\n";
+    }
   }
 
   auto &TTI = AM.getResult<TargetIRAnalysis>(F);
